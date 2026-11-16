@@ -1,7 +1,7 @@
 // © Rayssa Paiva · Todos os direitos reservados
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
-import { db } from './db';
+import { db, garantirEsquema } from './db';
 
 export type Papel = 'prof' | 'aluno';
 export type Sessao = { papel: Papel; id: string; admin?: boolean; turma?: string; nome?: string };
@@ -53,15 +53,16 @@ export async function sessao(): Promise<Sessao | null> {
   let p: { papel?: Papel; id?: string };
   try { p = (await jwtVerify(token, segredo())).payload as typeof p; } catch { return null; }
   if (!p.id || (p.papel !== 'prof' && p.papel !== 'aluno')) return null;
+  await garantirEsquema();
   const sql = db();
   if (p.papel === 'prof') {
     const [i] = await sql`select id, admin, ativo, nome from instrutores where id = ${p.id}`;
     if (!i || !i.ativo) return null;
     return { papel: 'prof', id: i.id, admin: i.admin, nome: i.nome };
   }
-  const [a] = await sql`select a.id, a.ativo, a.expira, a.turma_id, a.nome, t.dados->>'fechada' as fechada
+  const [a] = await sql`select a.id, a.ativo, a.aprovado, a.expira, a.turma_id, a.nome, t.dados->>'fechada' as fechada
     from alunos a join turmas t on t.id = a.turma_id where a.id = ${p.id}`;
-  if (!a || !a.ativo || a.fechada || (a.expira && new Date(a.expira) < new Date())) return null;
+  if (!a || !a.ativo || !a.aprovado || a.fechada || (a.expira && new Date(a.expira) < new Date())) return null;
   return { papel: 'aluno', id: a.id, turma: a.turma_id, nome: a.nome };
 }
 

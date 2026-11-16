@@ -154,3 +154,27 @@ create table if not exists codigos_acesso (
   enviado_em   timestamptz not null default now()
 );
 alter table codigos_acesso enable row level security;
+
+-- ---------- Convites, aprovação, perfil e notificações (nov/2026) ----------
+alter table alunos      add column if not exists aprovado boolean not null default true;
+alter table alunos      add column if not exists foto text;
+alter table alunos      add column if not exists sobre text;
+alter table instrutores add column if not exists foto text;
+alter table instrutores add column if not exists sobre text;
+
+-- Link/QR de convite de cada turma: o aprendiz cria a própria conta e espera aprovação
+create table if not exists convites (
+  token        text primary key,
+  turma_id     text not null unique references turmas(id) on delete cascade,
+  instrutor_id text not null references instrutores(id) on delete cascade,
+  criado_em    timestamptz not null default now()
+);
+alter table convites enable row level security;
+
+-- O que o aprendiz já viu: recados, aulas, atividades novas e avaliações
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'leituras_tipo_check' and pg_get_constraintdef(oid) like '%avaliacao%') then
+    alter table leituras drop constraint if exists leituras_tipo_check;
+    alter table leituras add constraint leituras_tipo_check check (tipo in ('aviso','aula','atividade','avaliacao'));
+  end if;
+end $$;

@@ -11,6 +11,8 @@ export type Lote = {
   deletes?: Record<string, string[]>;
   lidos?: string[];
   vistas?: string[];
+  vistasAt?: string[];
+  vistasAv?: string[];
   config?: { duracao?: number } | null;
 };
 export class Proibido extends Error {}
@@ -63,6 +65,8 @@ export async function aplicarLote(sql: Sql, s: Sessao, lote: Lote) {
       }
       for (const id of (lote.lidos ?? []).filter(idOk)) await tx`insert into leituras values (${s.id}, 'aviso', ${id}) on conflict do nothing`;
       for (const id of (lote.vistas ?? []).filter(idOk)) await tx`insert into leituras values (${s.id}, 'aula', ${id}) on conflict do nothing`;
+      for (const id of (lote.vistasAt ?? []).filter(idOk)) await tx`insert into leituras values (${s.id}, 'atividade', ${id}) on conflict do nothing`;
+      for (const id of (lote.vistasAv ?? []).filter(idOk)) await tx`insert into leituras values (${s.id}, 'avaliacao', ${id}) on conflict do nothing`;
       return;
     }
 
@@ -93,7 +97,7 @@ export async function aplicarLote(sql: Sql, s: Sessao, lote: Lote) {
 
     for (const o of up.turmas ?? []) {
       if (!idOk(o.id)) continue;
-      const dados = limpo(o, ['id', 'instrutor']);
+      const dados = limpo(o, ['id', 'instrutor', 'convite']);
       const r = await tx`insert into turmas (id, instrutor_id, dados) values (${o.id}, ${eu}, ${tx.json(dados)})
         on conflict (id) do update set dados = excluded.dados where turmas.instrutor_id = ${eu} returning id`;
       if (!r.length) throw new Proibido('Turma de outro instrutor.');
@@ -118,10 +122,10 @@ export async function aplicarLote(sql: Sql, s: Sessao, lote: Lote) {
       const usuario = await usuarioLivre(tx, txt(o.usuario, 60), o.id);
       if (usuario !== o.usuario) renomeados.push({ col: 'alunos', id: o.id, usuario });
       const hash = o._senha ? await bcrypt.hash(String(o._senha), 10) : null;
-      await tx`insert into alunos (id, turma_id, nome, usuario, senha_hash, primeiro, ativo, expira)
-        values (${o.id}, ${o.turma}, ${txt(o.nome, 120)}, ${usuario}, ${hash}, ${!!o.primeiro}, ${o.ativo !== false}, ${o.expira ? new Date(o.expira) : null})
+      await tx`insert into alunos (id, turma_id, nome, usuario, senha_hash, primeiro, ativo, expira, aprovado)
+        values (${o.id}, ${o.turma}, ${txt(o.nome, 120)}, ${usuario}, ${hash}, ${!!o.primeiro}, ${o.ativo !== false}, ${o.expira ? new Date(o.expira) : null}, ${o.aprovado !== false})
         on conflict (id) do update set turma_id = excluded.turma_id, nome = excluded.nome, usuario = excluded.usuario, primeiro = excluded.primeiro,
-          ativo = excluded.ativo, expira = excluded.expira, senha_hash = coalesce(excluded.senha_hash, alunos.senha_hash)`;
+          ativo = excluded.ativo, expira = excluded.expira, aprovado = excluded.aprovado, senha_hash = coalesce(excluded.senha_hash, alunos.senha_hash)`;
     }
 
     for (const o of up.atividades ?? []) {

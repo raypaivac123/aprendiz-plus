@@ -49,10 +49,11 @@ export async function POST(req: Request) {
     return json({ ok: true, semEmail: emailConfigurado() && !ins.email });
   }
 
-  const [a] = await sql`select a.id, a.ativo, a.expira, a.senha_hash, t.dados->>'fechada' as fechada
+  const [a] = await sql`select a.id, a.ativo, a.aprovado, a.expira, a.senha_hash, t.dados->>'fechada' as fechada
     from alunos a join turmas t on t.id = a.turma_id where a.usuario = ${u}`;
   if (!a || !a.senha_hash || !(await bcrypt.compare(p, a.senha_hash))) return falhou();
   await acertou();
+  if (!a.aprovado) return erro('Seu pedido de entrada ainda está aguardando a aprovação da instrutora.', 403);
   if (!a.ativo || a.fechada || (a.expira && new Date(a.expira) < new Date())) return erro('Seu acesso terminou junto com a turma. Fale com o instrutor.', 403);
   await criarSessao('aluno', a.id);
   return json({ ok: true });

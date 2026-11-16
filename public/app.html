@@ -31,6 +31,9 @@
 .ap-abertura .asa{width:64px;height:38px;background:#F7941D;clip-path:polygon(0 0,100% 35%,100% 65%,0 100%);animation:ap-voa 1.4s ease-in-out infinite}
 @keyframes ap-voa{0%,100%{transform:translateX(-10px);opacity:.55}50%{transform:translateX(10px);opacity:1}}
 .ap-abertura p{margin:0;font-size:14px;font-weight:600;color:rgba(255,255,255,.7)}
+.ap-av{object-fit:cover;border-radius:9999px;flex-shrink:0;background:rgb(var(--elevada))}
+.ap-qr{background:#fff;border-radius:12px;padding:10px;width:240px;height:240px;margin:0 auto;display:block}
+.ap-qr-grande{width:min(70vh,520px);height:min(70vh,520px)}
 .ap-codigo{letter-spacing:.5em;text-align:center;font-size:28px;font-weight:800;padding:.75rem}
 </style>
 </head>
@@ -81,7 +84,7 @@ const ic = (n, s = 18, cls = '') => `<svg aria-hidden="true" width="${s}" height
 
 /* ---------- dados (vêm do servidor) ---------- */
 const COLS = ['instrutores', 'turmas', 'alunos', 'aulas', 'questionarios', 'dinamicas', 'slides', 'banco', 'atividades', 'entregas', 'jogos', 'avisos'];
-function dadosVazios() { const d = { lidos: new Set(), vistas: new Set(), duracao: 20 }; COLS.forEach((c) => (d[c] = [])); return d; }
+function dadosVazios() { const d = { lidos: new Set(), vistas: new Set(), vistasAt: new Set(), vistasAv: new Set(), duracao: 20 }; COLS.forEach((c) => (d[c] = [])); return d; }
 let D = dadosVazios();
 const S = { papel: null, eu: 'a0', view: 'inicio', menu: false, modal: null, toast: null, jogo: null, jogoAluno: null };
 
@@ -111,10 +114,55 @@ const souAdmin = () => !!instrutor(S.prof)?.admin;
 const minhasTurmas = () => D.turmas.filter((t) => (t.instrutor || 'i1') === S.prof);
 const turmasAbertas = () => minhasTurmas().filter((t) => !t.fechada);
 const meus = (lista) => lista.filter((x) => (x.dono || 'i1') === S.prof);
-const meusAlunos = () => D.alunos.filter((a) => minhasTurmas().some((t) => t.id === a.turma));
+const meusAlunos = () => D.alunos.filter((a) => a.aprovado !== false && minhasTurmas().some((t) => t.id === a.turma));
+const pedidos = () => D.alunos.filter((a) => a.aprovado === false && minhasTurmas().some((t) => t.id === a.turma && !t.fechada));
 const minhasEntregas = () => D.entregas.filter((e) => { const ap = D.atividades.find((a) => a.id === e.at); return ap && minhasTurmas().some((t) => t.id === ap.turma); });
 const iniciais = (n) => n.split(' ').filter(Boolean).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
-const alunosDe = (tid) => D.alunos.filter((a) => a.turma === tid);
+/** Foto de perfil ou iniciais. tipo: 'a' aprendiz, 'i' instrutor. */
+function avatar(p, tipo, px = 36, cor = 'bg-senac text-white') {
+  if (!p) return '';
+  if (p.fotoV) return `<img src="/api/foto/${tipo}/${encodeURIComponent(p.id)}?v=${encodeURIComponent(p.fotoV)}" alt="" width="${px}" height="${px}" class="ap-av" style="width:${px}px;height:${px}px" loading="lazy">`;
+  return `<span class="flex shrink-0 items-center justify-center rounded-full ${cor} font-bold" style="width:${px}px;height:${px}px;font-size:${Math.round(px * 0.38)}px">${esc(iniciais(p.nome || '?'))}</span>`;
+}
+/* ---------- notificações do aprendiz ---------- */
+const chaveAval = (e) => e.id + '-' + (e.status === 'atendido' ? 'a' : 'n');
+function novidadesAluno() {
+  const a = aluno(S.eu); if (!a) return { avisos: [], atividades: [], avaliacoes: [] };
+  return {
+    avisos: D.avisos.filter((v) => v.turma === a.turma && !D.lidos.has(v.id)),
+    atividades: D.atividades.filter((x) => x.turma === a.turma && !D.vistasAt.has(x.id)),
+    avaliacoes: D.entregas.filter((e) => e.aluno === a.id && e.status !== 'entregue' && !D.vistasAv.has(chaveAval(e))),
+  };
+}
+const totalNovidades = () => { const n = novidadesAluno(); return n.avisos.length + n.atividades.length + n.avaliacoes.length; };
+/** Chaves do que é novidade agora (para avisar só o que chegou depois). */
+function novidadesChaves() {
+  if (S.papel === 'aluno') { const n = novidadesAluno(); return new Set([...n.avisos.map((v) => 'v' + v.id), ...n.atividades.map((x) => 't' + x.id), ...n.avaliacoes.map((e) => 'e' + chaveAval(e))]); }
+  if (S.papel === 'prof') return new Set([...pedidos().map((a) => 'p' + a.id), ...pendentesCorrecao().map((e) => 'c' + e.id)]);
+  return new Set();
+}
+function avisarNovidades(antes) {
+  const msgs = [];
+  if (S.papel === 'aluno') {
+    const n = novidadesAluno();
+    n.atividades.filter((x) => !antes.has('t' + x.id)).forEach((x) => msgs.push(['Nova atividade', ativ(x.id).titulo, 'atividades']));
+    n.avaliacoes.filter((e) => !antes.has('e' + chaveAval(e))).forEach((e) => msgs.push([e.status === 'atendido' ? 'Atividade atendida ✓' : 'Atividade para corrigir', ativ(e.at).titulo, 'historico']));
+    n.avisos.filter((v) => !antes.has('v' + v.id)).forEach((v) => msgs.push(['Novo recado no mural', v.texto.slice(0, 90), 'mural']));
+  } else if (S.papel === 'prof') {
+    const p = pedidos().filter((a) => !antes.has('p' + a.id)); if (p.length) msgs.push([p.length === 1 ? 'Novo pedido de entrada' : p.length + ' pedidos de entrada', p.map((a) => a.nome).slice(0, 3).join(', '), 'aprendizes']);
+    const c = pendentesCorrecao().filter((e) => !antes.has('c' + e.id)); if (c.length) msgs.push([c.length === 1 ? 'Nova entrega para avaliar' : c.length + ' entregas para avaliar', c.map((e) => aluno(e.aluno)?.nome).filter(Boolean).slice(0, 3).join(', '), 'correcoes']);
+  }
+  if (!msgs.length) return;
+  const [titulo, corpo, vista] = msgs[0];
+  toast(msgs.length > 1 ? `${titulo} e mais ${msgs.length - 1} novidade(s)` : `${titulo}: ${corpo}`, false, false);
+  try {
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+      msgs.slice(0, 3).forEach(([ti, co, vi]) => { const nt = new Notification('Aprendiz+ · ' + ti, { body: co, tag: 'ap-' + vi }); nt.onclick = () => { window.focus(); ir(vi); nt.close(); }; });
+    }
+  } catch (e) { /* navegador sem suporte */ }
+}
+const podeNotificar = () => 'Notification' in window && Notification.permission === 'default';
+const alunosDe = (tid) => D.alunos.filter((a) => a.turma === tid && a.aprovado !== false);
 const pendentesCorrecao = () => minhasEntregas().filter((e) => e.status === 'entregue');
 const avisosNaoLidos = () => { const a = aluno(S.eu); return a ? D.avisos.filter((v) => v.turma === a.turma && !D.lidos.has(v.id)).length : 0; };
 const entregaDe = (at, al) => D.entregas.find((e) => e.at === at && e.aluno === al);
@@ -162,6 +210,45 @@ function telaLogin() {
       <p class="mt-6 text-sm text-suave">Esqueceu a senha? Peça ao seu instrutor uma nova senha provisória.</p>
     </div>${copy()}</main></div>`;
 }
+function vPerfil() {
+  const prof = S.papel === 'prof'; const eu = prof ? instrutor(S.prof) : aluno(S.eu); if (!eu) return '';
+  const previa = S.fotoNova ? `<img src="${S.fotoNova}" alt="" class="ap-av" style="width:112px;height:112px">` : avatar(eu, prof ? 'i' : 'a', 112);
+  return cab('Meu perfil', prof ? 'Sua foto e sua apresentação aparecem para os aprendizes das suas turmas.' : 'Sua foto e sua apresentação aparecem para a sua instrutora.') +
+  `<div class="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">${card('Foto', `<div class="flex flex-col items-center gap-4"><span id="ap-previa" data-px="112">${previa}</span><label class="btn-secundario cursor-pointer">Escolher foto<input type="file" accept="image/*" class="sr-only" data-a="fotoEscolhida"></label>${eu.fotoV || S.fotoNova ? `<button class="btn-fantasma text-sm" data-a="removerFoto">Remover foto</button>` : ''}<p class="ajuda text-center">A foto é reduzida no seu aparelho antes de enviar.</p></div>`, 'h-fit')}
+  ${card('Sobre mim', `<form data-form="perfil" class="space-y-4"><div><label class="rotulo" for="f-sobre">Conte um pouco sobre você</label><textarea id="f-sobre" name="sobre" rows="6" maxlength="500" class="campo" placeholder="${prof ? 'Formação, áreas em que atua, como gosta de dar aula…' : 'Do que você gosta, o que espera do programa, onde trabalha…'}">${esc(eu.sobre || '')}</textarea><p class="ajuda">Até 500 caracteres.</p></div><p id="erro-form" role="alert" class="hidden text-sm text-red-700 dark:text-red-300"></p><button class="btn-primario">Salvar perfil</button></form>`)}</div>`;
+}
+/** Reduz a imagem para 256×256 (recorte central) e devolve JPEG em data URL. */
+function reduzirFoto(arquivo) {
+  return new Promise((ok, falha) => {
+    if (!arquivo || !arquivo.type.startsWith('image/')) return falha(new Error('Escolha um arquivo de imagem.'));
+    const img = new Image(); const url = URL.createObjectURL(arquivo);
+    img.onload = () => { const L = 256, c = document.createElement('canvas'); c.width = L; c.height = L; const lado = Math.min(img.width, img.height); c.getContext('2d').drawImage(img, (img.width - lado) / 2, (img.height - lado) / 2, lado, lado, 0, 0, L, L); URL.revokeObjectURL(url); ok(c.toDataURL('image/jpeg', 0.82)); };
+    img.onerror = () => { URL.revokeObjectURL(url); falha(new Error('Não foi possível ler essa imagem.')); };
+    img.src = url;
+  });
+}
+function telaConvite() {
+  const c = S.convite;
+  if (c.erro) return `<div class="mx-auto flex min-h-[100dvh] max-w-sm flex-col justify-center px-6 py-10"><div class="mb-6 flex items-center justify-between">${marca()}${botaoTema()}</div><h1 class="text-2xl font-bold">Convite indisponível</h1><p class="mt-2 text-[15px] text-suave">${esc(c.erro)}</p><button class="btn-primario mt-7 w-full py-3" data-a="sairConvite">Ir para o login</button>${copy('mt-10')}</div>`;
+  if (c.enviado) return `<div class="mx-auto flex min-h-[100dvh] max-w-sm flex-col justify-center px-6 py-10"><div class="mb-6 flex items-center justify-between">${marca()}${botaoTema()}</div><div class="asa mb-5 h-10 w-16 bg-laranja"></div><h1 class="text-2xl font-bold">Pedido enviado!</h1><p class="mt-2 text-[15px] text-suave">Agora é só esperar a aprovação de <b class="text-texto">${esc(c.instrutor)}</b>. Depois, entre com o usuário <b class="text-texto">${esc(c.usuario)}</b> e a senha que você criou.</p><button class="btn-primario mt-7 w-full py-3" data-a="sairConvite">Ir para o login</button>${copy('mt-10')}</div>`;
+  return `<div class="mx-auto flex min-h-[100dvh] max-w-sm flex-col justify-center px-6 py-10">
+    <div class="mb-6 flex items-center justify-between">${marca()}${botaoTema()}</div>
+    <p class="text-sm font-semibold text-suave">Convite para a turma</p>
+    <h1 class="mt-1 text-2xl font-bold">${esc(c.turma)}</h1>
+    <p class="mt-1.5 text-[15px] text-suave">Instrutor(a): <b class="text-texto">${esc(c.instrutor)}</b>. Crie sua conta; ela vale até ${dataBR(c.fecha)}, quando a turma encerra.</p>
+    <form data-form="cadastroConvite" class="mt-7 space-y-4">
+      <div class="flex items-center gap-4"><span id="ap-previa" data-px="72">${S.fotoNova ? `<img src="${S.fotoNova}" alt="" class="ap-av" style="width:72px;height:72px">` : `<span class="flex items-center justify-center rounded-full bg-elevada text-suave" style="width:72px;height:72px">${ic('aprendizes', 28)}</span>`}</span><label class="btn-secundario cursor-pointer">${S.fotoNova ? 'Trocar foto' : 'Adicionar foto (opcional)'}<input type="file" accept="image/*" class="sr-only" data-a="fotoEscolhida"></label></div>
+      ${campo('Nome completo', 'nome', 'required autocomplete="name"')}
+      ${campo('Usuário', 'usuario', 'required autocapitalize="none" autocomplete="username" placeholder="nome.sobrenome"', 'É com ele que você vai entrar. Letras minúsculas, números e ponto.')}
+      ${campo('Senha', 'senha', 'type="password" minlength="8" required autocomplete="new-password"', 'Mínimo de 8 caracteres, com letras e números.')}
+      ${campo('Confirme a senha', 'conf', 'type="password" minlength="8" required autocomplete="new-password"')}
+      <div><label class="rotulo" for="f-sobre">Sobre você (opcional)</label><textarea id="f-sobre" name="sobre" rows="3" maxlength="500" class="campo" placeholder="Do que você gosta, o que espera do programa…"></textarea></div>
+      <div class="rounded-campo border border-borda bg-superficie p-4 text-sm text-suave"><p class="font-semibold text-texto">Privacidade (LGPD)</p><p class="mt-1">Seu nome, sua foto, suas entregas e sua participação nos jogos servem só ao acompanhamento da turma. Quando a turma é encerrada, sua conta e seus dados são excluídos.</p><label class="mt-3 flex items-start gap-2 text-texto"><input type="checkbox" name="ciente" required class="mt-1 h-4 w-4 accent-[#004C99]"> Li e estou ciente.</label></div>
+      <p id="erro-form" role="alert" class="hidden rounded-campo border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200"></p>
+      <button class="btn-primario w-full py-3 text-[15px]">Enviar pedido de entrada</button>
+    </form>
+    <p class="mt-6 text-sm text-suave">Já tem conta? <span class="link" data-a="sairConvite">Entrar</span></p>${copy('mt-10')}</div>`;
+}
 function telaCodigo() {
   return `${faixaDemo}<div class="mx-auto flex min-h-[calc(100dvh-28px)] max-w-sm flex-col justify-center px-6 py-10">
     <div class="mb-6 flex items-center justify-between">${marca()}${botaoTema()}</div>
@@ -207,8 +294,8 @@ function telaPrimeiroAcesso() {
     </form>${copy('mt-10')}</div>`;
 }
 /* ---------- moldura com menu ---------- */
-const MENU_PROF = [['inicio', 'Início', 'home'], ['mural', 'Mural da turma', 'mural'], ['turmas', 'Minhas turmas', 'turmas'], ['aprendizes', 'Aprendizes', 'aprendizes'], ['materiais', 'Meus materiais', 'pasta'], ['correcoes', 'Entregas e avaliação', 'correcoes'], ['relatorios', 'Relatórios', 'relatorios'], ['config', 'Configurações', 'config']];
-const MENU_ALUNO = [['inicio', 'Início', 'home'], ['mural', 'Mural da turma', 'mural'], ['aulas', 'Aulas e conteúdos', 'conteudos'], ['atividades', 'Atividades', 'atividades'], ['jogar', 'Entrar em um jogo', 'jogos'], ['historico', 'Meu histórico', 'historico']];
+const MENU_PROF = [['inicio', 'Início', 'home'], ['mural', 'Mural da turma', 'mural'], ['turmas', 'Minhas turmas', 'turmas'], ['aprendizes', 'Aprendizes', 'aprendizes'], ['materiais', 'Meus materiais', 'pasta'], ['correcoes', 'Entregas e avaliação', 'correcoes'], ['relatorios', 'Relatórios', 'relatorios'], ['perfil', 'Meu perfil', 'aprendizes'], ['config', 'Configurações', 'config']];
+const MENU_ALUNO = [['inicio', 'Início', 'home'], ['novidades', 'Novidades', 'sino'], ['mural', 'Mural da turma', 'mural'], ['aulas', 'Aulas e conteúdos', 'conteudos'], ['atividades', 'Atividades', 'atividades'], ['jogar', 'Entrar em um jogo', 'jogos'], ['historico', 'Meu histórico', 'historico'], ['perfil', 'Meu perfil', 'aprendizes']];
 function moldura(conteudo) {
   const prof = S.papel === 'prof';
   const itens = prof ? (souAdmin() ? [...MENU_PROF.slice(0, -1), ['instrutores', 'Instrutores', 'aprendizes'], MENU_PROF[MENU_PROF.length - 1]] : MENU_PROF) : MENU_ALUNO;
@@ -216,14 +303,14 @@ function moldura(conteudo) {
   const nav = `<nav aria-label="Menu principal" class="flex h-full flex-col">
     <div class="flex items-center justify-between px-5 pb-5 pt-6">${marca('text-2xl', true)}<button class="rounded-campo p-2 text-white/80 hover:bg-white/10 lg:hidden" data-a="menu" aria-label="Fechar menu">${ic('x', 20)}</button></div>
     <ul class="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4">${itens.map(([v, r, i]) => {
-      const on = S.view.split(':')[0] === v; const n = prof && v === 'correcoes' ? pendentesCorrecao().length : !prof && v === 'mural' ? avisosNaoLidos() : 0;
+      const on = S.view.split(':')[0] === v; const nv = prof ? null : novidadesAluno(); const n = prof ? (v === 'correcoes' ? pendentesCorrecao().length : v === 'aprendizes' ? pedidos().length : 0) : v === 'mural' ? nv.avisos.length : v === 'atividades' ? nv.atividades.length : v === 'historico' ? nv.avaliacoes.length : v === 'novidades' ? totalNovidades() : 0;
       return `<li><button data-a="ir" data-v="${v}" ${on ? 'aria-current="page"' : ''} class="relative flex w-full items-center gap-3 rounded-campo px-3 py-2.5 text-left text-[14px] font-medium ${on ? 'bg-white/[0.12] text-white' : 'text-white/75 hover:bg-white/[0.07] hover:text-white'}">${on ? '<span class="asa absolute -left-3 top-1/2 h-7 w-2.5 -translate-y-1/2 bg-laranja"></span>' : ''}${ic(i, 18, on ? 'text-laranja' : '')}<span class="flex-1">${r}</span>${n ? `<span class="rounded-full bg-laranja px-2 py-0.5 text-xs font-bold text-marinho-900">${n}</span>` : ''}</button></li>`;
     }).join('')}</ul>
-    <div class="border-t border-white/10 px-5 py-4"><div class="mb-4">${logoChip('h-6')}</div><p class="truncate text-sm font-semibold text-white">${esc(nome)}</p><p class="text-xs text-white/60">${prof ? (souAdmin() ? 'Administração · Instrutor(a)' : 'Instrutor(a)') : 'Aprendiz'}</p><button data-a="sair" class="mt-3 inline-flex items-center gap-2 text-sm text-white/75 hover:text-white">${ic('sair', 16)} Sair</button></div></nav>`;
+    <div class="border-t border-white/10 px-5 py-4"><div class="mb-4">${logoChip('h-6')}</div><div class="flex items-center gap-3"><button data-a="ir" data-v="perfil" aria-label="Meu perfil">${prof ? avatar(instrutor(S.prof), 'i', 40, 'bg-laranja text-marinho-900') : avatar(aluno(S.eu), 'a', 40, 'bg-laranja text-marinho-900')}</button><div class="min-w-0"><p class="truncate text-sm font-semibold text-white">${esc(nome)}</p><p class="text-xs text-white/60">${prof ? (souAdmin() ? 'Administração · Instrutor(a)' : 'Instrutor(a)') : 'Aprendiz'}</p></div></div><button data-a="sair" class="mt-3 inline-flex items-center gap-2 text-sm text-white/75 hover:text-white">${ic('sair', 16)} Sair</button></div></nav>`;
   return `${faixaDemo}<div class="min-h-[calc(100dvh-28px)] lg:grid lg:grid-cols-[264px_1fr]">
     <aside class="sticky top-0 hidden h-dvh bg-marinho lg:block">${nav}</aside>
     ${S.menu ? `<div class="fixed inset-0 z-40 lg:hidden"><div class="absolute inset-0 bg-black/50" data-a="menu"></div><aside class="absolute inset-y-0 left-0 w-[280px] bg-marinho shadow-2xl">${nav}</aside></div>` : ''}
-    <div class="min-w-0"><header class="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-borda bg-fundo/90 px-4 py-2.5 backdrop-blur sm:px-8"><button class="btn-fantasma px-2 lg:hidden" data-a="menu" aria-label="Abrir menu">${ic('menu', 22)}</button><div class="lg:hidden">${marca('text-xl')}</div><div class="ml-auto flex items-center gap-1">${prof ? '' : (() => { const n = avisosNaoLidos(); return `<button class="btn-fantasma relative px-2.5" data-a="ir" data-v="mural" aria-label="${n ? n + ' avisos novos no mural' : 'Mural da turma'}">${ic('sino', 20)}${n ? `<span class="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-laranja px-1 text-[11px] font-bold text-marinho-900">${n}</span>` : ''}</button>`; })()}${botaoTema()}</div></header>
+    <div class="min-w-0"><header class="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-borda bg-fundo/90 px-4 py-2.5 backdrop-blur sm:px-8"><button class="btn-fantasma px-2 lg:hidden" data-a="menu" aria-label="Abrir menu">${ic('menu', 22)}</button><div class="lg:hidden">${marca('text-xl')}</div><div class="ml-auto flex items-center gap-1">${(() => { const n = prof ? pedidos().length + pendentesCorrecao().length : totalNovidades(); const dest = prof ? (pedidos().length ? 'aprendizes' : 'correcoes') : 'novidades'; return `<button class="btn-fantasma relative px-2.5" data-a="ir" data-v="${dest}" aria-label="${n ? n + ' novidades' : 'Novidades'}">${ic('sino', 20)}${n ? `<span class="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-laranja px-1 text-[11px] font-bold text-marinho-900">${n}</span>` : ''}</button>`; })()}${botaoTema()}</div></header>
     <main class="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-9">${conteudo}</main>${copy('pb-6')}</div></div>`;
 }
 
@@ -259,7 +346,7 @@ function vMural() {
   <div class="mx-auto max-w-3xl space-y-4">
     <div class="flex items-center gap-3 rounded-card bg-marinho px-5 py-4 text-white"><span class="flex h-10 w-10 items-center justify-center rounded-full bg-laranja text-marinho-900">${ic('mural', 20)}</span><div><p class="font-bold">Geral · ${esc(t.nome)}</p><p class="text-xs text-white/70">${leitores} aprendizes neste canal</p></div></div>
     ${prof ? `<form data-form="aviso" class="card p-4"><label for="f-aviso" class="sr-only">Novo recado</label><textarea id="f-aviso" name="texto" rows="3" required class="campo" placeholder="Escreva um recado para a turma. Ex.: Na próxima aula vamos…"></textarea><div class="mt-3 flex flex-wrap items-center justify-between gap-3"><label class="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name="fixar" class="h-4 w-4 accent-[#004C99]"> Fixar no topo</label><div class="flex gap-2"><button type="button" class="btn-fantasma" data-a="avisoIA">${ic('ia', 16)} Melhorar com IA</button><button class="btn-primario">Publicar no mural</button></div></div></form>` : ''}
-    ${lista.length ? lista.map((v) => `<article class="card p-5 ${v.fixado ? 'border-laranja/60' : ''} ${novos.has(v.id) ? 'ring-2 ring-laranja/50' : ''}"><div class="flex items-center gap-3"><span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-senac text-sm font-bold text-white">${iniciais(instrutor(t.instrutor || 'i1').nome)}</span><div class="min-w-0 flex-1"><p class="text-sm font-bold">${esc(instrutor(t.instrutor || 'i1').nome)} <span class="font-medium text-suave">· instrutor(a)</span></p><p class="text-xs text-suave">${dataHoraBR(v.quando)}</p></div>${v.fixado ? etq('laranja', 'Fixado') : ''}${novos.has(v.id) ? etq('azul', 'Novo') : ''}${prof ? `<button class="btn-fantasma px-2 py-1 text-xs" data-a="apagarAviso" data-id="${v.id}">Apagar</button>` : ''}</div><p class="mt-3 whitespace-pre-line text-[15px] leading-relaxed">${esc(v.texto)}</p>${prof ? `<p class="mt-3 text-xs text-suave">Visto por ${v.id === 'v1' ? leitores : Math.max(0, leitores - 3)} de ${leitores}</p>` : ''}</article>`).join('') : vazio('Nenhum recado ainda', prof ? 'Escreva o primeiro recado acima.' : 'Quando a instrutora publicar, aparece aqui.')}
+    ${lista.length ? lista.map((v) => `<article class="card p-5 ${v.fixado ? 'border-laranja/60' : ''} ${novos.has(v.id) ? 'ring-2 ring-laranja/50' : ''}"><div class="flex items-center gap-3">${avatar(instrutor(t.instrutor || 'i1'), 'i', 36)}<div class="min-w-0 flex-1"><p class="text-sm font-bold">${esc(instrutor(t.instrutor || 'i1').nome)} <span class="font-medium text-suave">· instrutor(a)</span></p><p class="text-xs text-suave">${dataHoraBR(v.quando)}</p></div>${v.fixado ? etq('laranja', 'Fixado') : ''}${novos.has(v.id) ? etq('azul', 'Novo') : ''}${prof ? `<button class="btn-fantasma px-2 py-1 text-xs" data-a="apagarAviso" data-id="${v.id}">Apagar</button>` : ''}</div><p class="mt-3 whitespace-pre-line text-[15px] leading-relaxed">${esc(v.texto)}</p>${prof ? `<p class="mt-3 text-xs text-suave">Visto por ${v.id === 'v1' ? leitores : Math.max(0, leitores - 3)} de ${leitores}</p>` : ''}</article>`).join('') : vazio('Nenhum recado ainda', prof ? 'Escreva o primeiro recado acima.' : 'Quando a instrutora publicar, aparece aqui.')}
   </div>`;
 }
 function vTurmas() {
@@ -269,17 +356,20 @@ function vTurmas() {
     ${t.fechada ? '' : `<div class="mt-3 h-2 max-w-md overflow-hidden rounded-full bg-elevada" aria-label="Andamento do período"><div class="h-full rounded-full bg-laranja" style="width:${Math.min(100, Math.max(3, (Date.now() - t.inicio) / (t.fecha - t.inicio) * 100))}%"></div></div>`}</div>
     <div class="flex shrink-0 flex-wrap items-center gap-2">${t.fechada
       ? `<button class="btn-primario" data-a="relatorioFinal" data-id="${t.id}">Ver relatório final</button><button class="btn-secundario" data-a="modal" data-m="novaTurma" data-base="${t.id}">Abrir nova com estes materiais</button>`
-      : `<span class="mr-2 text-sm text-suave">${m.alunos} aprendizes · ${m.atividades} atividades</span><button class="btn-secundario" data-a="prorrogar" data-id="${t.id}">+5 dias</button><button class="btn-destaque" data-a="modal" data-m="encerrar" data-id="${t.id}">Encerrar agora</button>`}</div>
+      : `<span class="mr-2 text-sm text-suave">${m.alunos} aprendizes · ${m.atividades} atividades${pedidos().filter((a) => a.turma === t.id).length ? ` · <span class="link" data-a="ir" data-v="aprendizes">${pedidos().filter((a) => a.turma === t.id).length} pedido(s)</span>` : ''}</span><button class="btn-primario" data-a="modal" data-m="convite" data-id="${t.id}">${t.convite ? 'Convite (link e QR)' : 'Criar convite'}</button><button class="btn-secundario" data-a="prorrogar" data-id="${t.id}">+5 dias</button><button class="btn-destaque" data-a="modal" data-m="encerrar" data-id="${t.id}">Encerrar agora</button>`}</div>
   </div>`; }).join('')}</div>`;
 }
 function vAprendizes() {
   const lista = meusAlunos();
   const sit = (a) => a.primeiro ? etq('laranja', 'Aguardando 1º acesso') : etq('verde', 'Ativo');
   const listaHTML = lista.length ? `
-    <ul class="divide-y divide-borda sm:hidden">${lista.map((a) => `<li class="py-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="font-bold">${esc(a.nome)}</p><p class="text-xs text-suave">${esc(a.usuario)}</p></div>${sit(a)}</div><p class="mt-1 text-xs text-suave">${esc(turma(a.turma)?.nome ?? '—')} · acesso até ${dataBR(a.expira)}</p></li>`).join('')}</ul>
-    <div class="-mx-5 hidden overflow-x-auto sm:-mx-6 sm:block"><table class="tabela"><thead><tr><th>Nome</th><th>Turma</th><th>Situação</th><th>Acesso até</th></tr></thead><tbody>${lista.map((a) => `<tr><td><b>${esc(a.nome)}</b><p class="text-xs text-suave">${esc(a.usuario)}</p></td><td class="text-suave">${esc(turma(a.turma)?.nome ?? '—')}</td><td>${sit(a)}</td><td class="whitespace-nowrap tabular-nums">${dataBR(a.expira)}</td></tr>`).join('')}</tbody></table></div>`
+    <ul class="divide-y divide-borda sm:hidden">${lista.map((a) => `<li class="py-3"><div class="flex items-start justify-between gap-3"><div class="flex min-w-0 items-center gap-3">${avatar(a, 'a', 36)}<div class="min-w-0"><p class="font-bold">${esc(a.nome)}</p><p class="text-xs text-suave">${esc(a.usuario)}</p></div></div>${sit(a)}</div><p class="mt-1 text-xs text-suave">${esc(turma(a.turma)?.nome ?? '—')} · acesso até ${dataBR(a.expira)}</p></li>`).join('')}</ul>
+    <div class="-mx-5 hidden overflow-x-auto sm:-mx-6 sm:block"><table class="tabela"><thead><tr><th>Nome</th><th>Turma</th><th>Situação</th><th>Acesso até</th></tr></thead><tbody>${lista.map((a) => `<tr><td><div class="flex items-center gap-3">${avatar(a, 'a', 36)}<div><b>${esc(a.nome)}</b><p class="text-xs text-suave">${esc(a.usuario)}</p>${a.sobre ? `<p class="mt-0.5 line-clamp-2 text-xs text-suave">${esc(a.sobre)}</p>` : ''}</div></div></td><td class="text-suave">${esc(turma(a.turma)?.nome ?? '—')}</td><td>${sit(a)}</td><td class="whitespace-nowrap tabular-nums">${dataBR(a.expira)}</td></tr>`).join('')}</tbody></table></div>`
     : vazio('Nenhum aprendiz', 'Cadastre abaixo.');
-  return cab('Aprendizes', 'Você cria a conta com uma senha provisória. O aprendiz troca a senha no primeiro acesso. A conta vale até a turma encerrar.') +
+  const ped = pedidos().sort((a, b) => new Date(a.pedidoEm) - new Date(b.pedidoEm));
+  const blocoPedidos = ped.length ? card(`Pedidos de entrada (${ped.length})`, `<form data-form="pedidos"><ul class="divide-y divide-borda">${ped.map((a) => `<li class="flex items-start gap-3 py-3"><input type="checkbox" name="sel" value="${esc(a.id)}" checked class="mt-3 h-4 w-4 accent-[#004C99]" aria-label="Selecionar ${esc(a.nome)}">${avatar(a, 'a', 44)}<div class="min-w-0 flex-1"><p class="font-bold">${esc(a.nome)}</p><p class="text-xs text-suave">${esc(a.usuario)} · ${esc(turma(a.turma)?.nome ?? '')} · pediu em ${dataHoraBR(a.pedidoEm)}</p>${a.sobre ? `<p class="mt-1 whitespace-pre-line text-sm">${esc(a.sobre)}</p>` : ''}</div></li>`).join('')}</ul>
+    <div class="mt-4 flex flex-wrap gap-2 border-t border-borda pt-4"><button class="btn-primario" name="acao" value="aprovar">Aprovar selecionados</button><button class="btn-perigo" name="acao" value="recusar">Recusar selecionados</button><button type="button" class="btn-fantasma" data-a="marcarPedidos">Marcar/desmarcar todos</button></div></form>`, 'mb-6 border-laranja/60', '') : '';
+  return cab('Aprendizes', 'Cadastre aqui ou envie o convite da turma (em Minhas turmas) para cada aprendiz criar a própria conta. Os pedidos chegam aqui para você aprovar.') + blocoPedidos +
   `<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">${card(`${lista.length} aprendiz${lista.length === 1 ? '' : 'es'}`, listaHTML)}
   <div class="space-y-6">${card('Cadastrar aprendiz', turmasAbertas().length ? `<form data-form="novoAluno" class="space-y-4">${campo('Nome completo', 'nome', 'required')}${selTurma()}<button class="btn-primario w-full sm:w-auto">Cadastrar e gerar senha</button></form>${S.credenciais ? `<div class="mt-4 rounded-campo border border-laranja/60 bg-laranja/[0.07] p-4 text-sm"><p class="font-semibold">Senhas provisórias — entregue a cada aprendiz</p><ul class="mt-2 space-y-1.5">${S.credenciais.map((c) => `<li class="rounded-campo bg-superficie px-3 py-2 break-words"><b>${esc(c.nome)}</b><br><span class="text-suave">usuário</span> <b>${esc(c.usuario)}</b> · <span class="text-suave">senha</span> <b class="font-mono">${c.senha}</b></li>`).join('')}</ul><p class="mt-2 text-xs text-suave">Válida até o encerramento da turma.</p></div>` : ''}` : '<p class="text-sm text-suave">Abra uma turma primeiro.</p>')}
   ${turmasAbertas().length ? card('Importar lista (CSV)', `<form data-form="importar" class="space-y-4">${selTurma('turmaImp')}<div><label class="rotulo" for="f-csv">Cole um nome por linha</label><textarea id="f-csv" name="csv" rows="4" class="campo" placeholder="Igor Santos\nJúlia Ramos"></textarea><p class="ajuda">Pode colar a coluna de nomes direto da planilha.</p></div><button class="btn-primario w-full sm:w-auto">Importar aprendizes</button></form>`) : ''}</div></div>`;
@@ -367,7 +457,7 @@ function vInstrutores() {
   const lista = D.instrutores;
   return cab('Instrutores', 'Crie o acesso de cada instrutor. Cada um tem o próprio painel, com as próprias turmas, aprendizes, materiais e mural — um não vê o do outro.') +
   `<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]"><div class="space-y-3">${lista.map((i) => { const ts = D.turmas.filter((t) => (t.instrutor || 'i1') === i.id); const ab = ts.filter((t) => !t.fechada); const nAl = D.alunos.filter((a) => ab.some((t) => t.id === a.turma)).length; const nMat = [D.aulas, D.banco, D.questionarios, D.jogos, D.dinamicas, D.slides].reduce((n, l) => n + l.filter((x) => (x.dono || 'i1') === i.id).length, 0);
-    return `<article class="card p-5"><div class="flex flex-wrap items-start gap-3"><span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${i.admin ? 'bg-laranja text-marinho-900' : 'bg-senac text-white'} font-bold">${iniciais(i.nome)}</span><div class="min-w-0 flex-1"><p class="font-bold">${esc(i.nome)}</p><p class="text-xs text-suave">${esc(i.usuario)} · ${esc(i.email)}</p><div class="mt-2 flex flex-wrap gap-1.5">${i.admin ? etq('laranja', 'Administração') : etq('azul', 'Instrutor(a)')}${!i.ativo ? etq('vermelho', 'Desativado') : i.primeiro ? etq('neutro', 'Aguardando 1º acesso') : etq('verde', 'Ativo')}</div></div></div>
+    return `<article class="card p-5"><div class="flex flex-wrap items-start gap-3">${avatar(i, 'i', 44, i.admin ? 'bg-laranja text-marinho-900' : 'bg-senac text-white')}<div class="min-w-0 flex-1"><p class="font-bold">${esc(i.nome)}</p><p class="text-xs text-suave">${esc(i.usuario)} · ${esc(i.email)}</p><div class="mt-2 flex flex-wrap gap-1.5">${i.admin ? etq('laranja', 'Administração') : etq('azul', 'Instrutor(a)')}${!i.ativo ? etq('vermelho', 'Desativado') : i.primeiro ? etq('neutro', 'Aguardando 1º acesso') : etq('verde', 'Ativo')}</div></div></div>
     <dl class="mt-4 grid grid-cols-3 gap-2 text-center text-sm"><div class="rounded-campo bg-elevada p-2"><dt class="text-xs text-suave">Turmas abertas</dt><dd class="text-lg font-bold">${ab.length}</dd></div><div class="rounded-campo bg-elevada p-2"><dt class="text-xs text-suave">Aprendizes</dt><dd class="text-lg font-bold">${nAl}</dd></div><div class="rounded-campo bg-elevada p-2"><dt class="text-xs text-suave">Materiais</dt><dd class="text-lg font-bold">${nMat}</dd></div></dl>
     ${ab.length ? `<p class="mt-3 text-xs text-suave">${ab.map((t) => esc(t.nome)).join(' · ')}</p>` : ''}
     ${i.id !== S.prof ? `<div class="mt-4 flex flex-wrap gap-2"><button class="btn-secundario px-3 py-1.5 text-xs" data-a="senhaInstrutor" data-id="${i.id}">Gerar nova senha</button><button class="${i.ativo ? 'btn-perigo' : 'btn-secundario'} px-3 py-1.5 text-xs" data-a="alternarInstrutor" data-id="${i.id}">${i.ativo ? 'Desativar acesso' : 'Reativar acesso'}</button></div>` : '<p class="mt-4 text-xs text-suave">Esta é a sua conta.</p>'}
@@ -389,12 +479,31 @@ function vAlunoInicio() {
   const novas = aulasDaTurma(a.turma).filter((l) => !D.vistas.has(l.id));
   const fbs = D.entregas.filter((e) => e.aluno === a.id && e.status !== 'entregue');
   const nAv = avisosNaoLidos(); const ultAviso = D.avisos.filter((v) => v.turma === a.turma).sort((x, y) => y.quando - x.quando)[0];
+  const nNov = totalNovidades();
   return `<header class="mb-8"><h1 class="text-3xl font-extrabold tracking-tight">Olá, ${esc(primeiro(a.nome))}!</h1><p class="mt-2 text-[15px] text-suave">${pend.length ? `Você tem ${pend.length} atividade(s) para fazer.` : 'Tudo em dia por aqui.'} Sua turma encerra em <b class="text-texto">${dataBR(t.fecha)}</b>.</p></header>
+  ${nNov ? `<button data-a="ir" data-v="novidades" class="mb-4 flex w-full items-center gap-3 rounded-card border border-laranja bg-laranja/[0.08] p-4 text-left"><span class="text-acento">${ic('sino', 22)}</span><span class="flex-1 text-sm font-bold">Você tem ${nNov} novidade(s): atividades, avaliações ou recados</span><span class="link text-sm">Ver</span></button>` : ''}
+  ${podeNotificar() ? `<div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-card border border-borda bg-superficie p-4 text-sm"><span>Receba um aviso quando chegar atividade ou avaliação, mesmo com o site em outra aba.</span><button class="btn-secundario" data-a="ativarNotificacoes">Ativar notificações</button></div>` : ''}
   ${ultAviso ? `<button data-a="ir" data-v="mural" class="mb-6 flex w-full items-start gap-3 rounded-card border ${nAv ? 'border-laranja bg-laranja/[0.08]' : 'border-borda bg-superficie'} p-4 text-left"><span class="relative mt-0.5 text-acento">${ic('sino', 22)}${nAv ? `<span class="absolute -right-2 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-laranja px-1 text-[11px] font-bold text-marinho-900">${nAv}</span>` : ''}</span><span class="min-w-0"><span class="text-sm font-bold">${nAv ? `${nAv} recado(s) novo(s) no mural` : 'Último recado do mural'}</span><span class="mt-1 line-clamp-2 block text-sm text-suave">${esc(ultAviso.texto)}</span></span></button>` : ''}
   <div class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">${ind('Para fazer', pend.length, '', pend.length > 0, 'data-a="ir" data-v="atividades"')}${ind('Aulas novas', novas.length, '', false, 'data-a="ir" data-v="aulas"')}${ind('Atendidas', fbs.filter((e) => e.status === 'atendido').length)}${ind('Dias de turma', Math.max(0, restam(t.fecha)), 'restantes')}</div>
   <div class="grid gap-6 lg:grid-cols-2">${card('Próximos prazos', pend.length ? `<ul class="divide-y divide-borda">${pend.map((x) => `<li class="flex items-center justify-between gap-3 py-3 text-sm"><span class="link" data-a="responder" data-id="${x.id}">${esc(ativ(x.id).titulo)}</span>${entregaDe(x.id, a.id)?.status === 'nao_atendido' ? st('nao_atendido') : `<b class="${x.prazo < hoje() ? 'text-red-700 dark:text-red-300' : ''}">${x.prazo < hoje() ? 'Prazo encerrado' : dataBR(x.prazo)}</b>`}</li>`).join('')}</ul>` : '<p class="text-sm text-suave">Nenhuma atividade pendente.</p>')}
   ${card('Aulas que você ainda não abriu', novas.length ? `<ul class="divide-y divide-borda">${novas.map((l) => `<li class="flex items-center justify-between gap-3 py-3 text-sm"><span class="link" data-a="verAula" data-id="${l.id}">${esc(l.titulo)}</span>${etq('laranja', 'Nova')}</li>`).join('')}</ul>` : '<p class="text-sm text-suave">Você já viu todas as aulas.</p>')}
+  ${(() => { const ins = instrutor(t.instrutor); return ins ? card('Sua instrutora', `<div class="flex items-start gap-4">${avatar(ins, 'i', 56)}<div class="min-w-0"><p class="font-bold">${esc(ins.nome)}</p>${ins.sobre ? `<p class="mt-1 whitespace-pre-line text-sm text-suave">${esc(ins.sobre)}</p>` : ''}</div></div>`) : ''; })()}
   ${card('Últimos feedbacks', fbs.length ? fbs.map((e) => `<div class="mb-3 rounded-campo bg-elevada p-4 text-sm"><div class="flex flex-wrap items-center justify-between gap-2"><b>${esc(ativ(e.at).titulo)}</b>${st(e.status)}</div><p class="mt-1 text-suave">${esc(e.fb)}</p></div>`).join('') : '<p class="text-sm text-suave">Quando a instrutora avaliar, o feedback aparece aqui.</p>', 'lg:col-span-2')}</div>`;
+}
+function vNovidades() {
+  const n = novidadesAluno();
+  const item = (icone, rot, titulo, sub, acao) => `<li><button ${acao} class="card flex w-full items-center gap-4 p-4 text-left hover:border-senac/60 ring-2 ring-laranja/50"><span class="text-acento">${ic(icone, 22)}</span><span class="min-w-0 flex-1"><span class="block text-xs font-semibold uppercase text-suave">${rot}</span><span class="block font-bold">${esc(titulo)}</span>${sub ? `<span class="mt-0.5 block line-clamp-2 text-sm text-suave">${esc(sub)}</span>` : ''}</span>${etq('laranja', 'Novo')}</button></li>`;
+  const lista = [
+    ...n.avaliacoes.map((e) => item('historico', e.status === 'atendido' ? 'Avaliação · Atendido' : 'Avaliação · Corrigir e reenviar', ativ(e.at).titulo, e.fb, `data-a="responder" data-id="${e.at}"`)),
+    ...n.atividades.map((x) => item('atividades', 'Nova atividade · prazo ' + dataBR(x.prazo), ativ(x.id).titulo, '', `data-a="responder" data-id="${x.id}"`)),
+    ...n.avisos.map((v) => item('mural', 'Recado no mural', v.texto.slice(0, 80), '', 'data-a="ir" data-v="mural"')),
+  ];
+  // abrir esta tela marca tudo como visto
+  n.atividades.forEach((x) => D.vistasAt.add(x.id)); n.avaliacoes.forEach((e) => D.vistasAv.add(chaveAval(e))); n.avisos.forEach((v) => D.lidos.add(v.id));
+  setTimeout(persistir, 0);
+  return cab('Novidades', 'Atividades novas, avaliações da instrutora e recados que você ainda não viu.') +
+    (podeNotificar() ? `<div class="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-card border border-borda bg-superficie p-4 text-sm"><span>Quer ser avisada(o) mesmo com o site em outra aba?</span><button class="btn-primario" data-a="ativarNotificacoes">Ativar notificações</button></div>` : '') +
+    (lista.length ? `<ul class="space-y-3">${lista.join('')}</ul>` : vazio('Nada novo por enquanto', 'Quando a instrutora publicar uma atividade ou avaliar uma entrega, aparece aqui.'));
 }
 function vAlunoAulas() {
   const a = aluno(S.eu);
@@ -411,10 +520,16 @@ function vAlunoAula(id) {
 function vAlunoAtividades() {
   const a = aluno(S.eu);
   const ats = D.atividades.filter((x) => x.turma === a.turma);
+  const novas = new Set(ats.filter((x) => !D.vistasAt.has(x.id)).map((x) => x.id));
+  if (novas.size) { novas.forEach((id) => D.vistasAt.add(id)); setTimeout(persistir, 0); }
   return cab('Atividades', 'Leia o enunciado e responda com texto ou arquivo. Fique de olho nos prazos.') + `<ul class="space-y-3">${ats.map((x) => { const e = entregaDe(x.id, a.id); const s = e?.status ?? 'nao_iniciada'; const b = ativ(x.id); return `<li><button data-a="responder" data-id="${x.id}" class="card flex w-full flex-col gap-3 p-5 text-left hover:border-senac/60 sm:flex-row sm:items-center sm:justify-between"><div><h2 class="font-bold">${esc(b.titulo)}</h2><p class="text-sm text-suave">Resposta por ${b.resposta === 'ambos' ? 'texto ou arquivo' : b.resposta}</p></div><div class="flex flex-wrap items-center gap-3 text-sm"><span class="text-suave">Prazo ${dataBR(x.prazo)}</span>${st(s)}</div></button></li>`; }).join('')}</ul>`;
 }
 function vAlunoResponder(id) {
   const x = ativ(id); const e = entregaDe(id, S.eu);
+  let marcou = false;
+  if (!D.vistasAt.has(id)) { D.vistasAt.add(id); marcou = true; }
+  if (e && e.status !== 'entregue' && !D.vistasAv.has(chaveAval(e))) { D.vistasAv.add(chaveAval(e)); marcou = true; }
+  if (marcou) setTimeout(persistir, 0);
   const editavel = !e || e.status === 'nao_atendido';
   const enun = x.formato === 'questionario' ? `<p>${esc(x.enunciado)}</p><ol class="mt-3 list-decimal space-y-1 pl-5">${x.perguntas.map((p) => `<li>${esc(p)}</li>`).join('')}</ol>` : x.formato === 'arquivo'
     ? `<div class="flex flex-wrap items-center gap-3"><a href="${urlArq(x.arquivoId)}" target="_blank" rel="noopener" class="flex items-center gap-3 rounded-campo bg-elevada px-4 py-3 text-left text-sm font-semibold hover:bg-borda/50">${ic('atividades', 20, 'text-acento')}${esc(x.arquivo)}</a></div>${x.enunciado ? `<p class="mt-3 whitespace-pre-line">${esc(x.enunciado)}</p>` : ''}`
@@ -442,6 +557,8 @@ function vAlunoJogar() {
 }
 function vHistorico() {
   const es = D.entregas.filter((e) => e.aluno === S.eu);
+  const novasAv = new Set(es.filter((e) => e.status !== 'entregue' && !D.vistasAv.has(chaveAval(e))).map(chaveAval));
+  if (novasAv.size) { novasAv.forEach((k) => D.vistasAv.add(k)); setTimeout(persistir, 0); }
   return cab('Meu histórico', 'Suas entregas e feedbacks. Só você e a instrutora veem estas informações.') + card('Atividades entregues', es.length ? `<ul class="divide-y divide-borda">${es.map((e) => `<li class="py-3"><div class="flex flex-wrap items-center justify-between gap-2"><b>${esc(ativ(e.at).titulo)}</b>${st(e.status)}</div>${e.fb && e.status !== 'entregue' ? `<p class="mt-1 text-sm"><b>Feedback:</b> ${esc(e.fb)}</p>` : ''}</li>`).join('')}</ul>` : vazio('Nenhuma entrega ainda'));
 }
 /* ---------- modais ---------- */
@@ -452,6 +569,18 @@ function modal() {
     const base = m.base ? turma(m.base) : null;
     titulo = base ? 'Abrir nova turma com os materiais de ' + esc(base.nome) : 'Abrir nova turma';
     corpo = `<form data-form="novaTurma" data-base="${m.base || ''}" class="grid gap-4 sm:grid-cols-2"><div class="sm:col-span-2">${campo('Nome da turma', 'nome', `required value="${esc(base?.nome ?? '')}"`)}</div>${campo('Identificação', 'codigo', 'placeholder="Ex.: 2026.12.APR"')}${campo('Unidade curricular', 'uc', `value="${esc(base?.uc ?? '')}"`)}${campo('Início', 'inicio', `type="date" required value="${hoje().toISOString().slice(0, 10)}"`)}${campo('Duração (dias)', 'dias', `type="number" min="1" max="120" required value="${D.duracao}"`, 'A turma fecha sozinha ao fim do período.')}${base ? `<p class="text-sm text-suave sm:col-span-2">As aulas serão publicadas e as atividades aplicadas na nova turma, com novos prazos. Os aprendizes e o mural não são copiados.</p>` : ''}<div class="sm:col-span-2"><button class="btn-primario">Abrir turma</button></div></form>`;
+  } else if (m.tipo === 'convite') {
+    const t = turma(m.id); titulo = 'Convite · ' + esc(t.nome);
+    const link = t.convite ? location.origin + '/?convite=' + t.convite : '';
+    corpo = t.convite ? `<p class="text-sm text-suave">Quem abrir o link ou ler o QR code cria a própria conta <b class="text-texto">nesta turma</b>. A conta só funciona depois que você aprovar em <b class="text-texto">Aprendizes → Pedidos de entrada</b>.</p>
+      <img src="/api/convite/qr?turma=${encodeURIComponent(t.id)}&v=${encodeURIComponent(t.convite)}" alt="QR code do convite da turma ${esc(t.nome)}" class="ap-qr mt-5">
+      <div class="mt-5 flex gap-2"><input id="f-link" class="campo" readonly value="${esc(link)}" aria-label="Link do convite"><button class="btn-primario" data-a="copiarConvite">Copiar</button></div>
+      <div class="mt-5 flex flex-wrap gap-2"><button class="btn-destaque" data-a="projetarConvite" data-id="${t.id}">Projetar QR em tela cheia</button><button class="btn-secundario" data-a="gerarConvite" data-id="${t.id}">Gerar novo link</button><button class="btn-perigo" data-a="desativarConvite" data-id="${t.id}">Desativar convite</button></div>
+      <p class="mt-3 text-xs text-suave">"Gerar novo link" desativa o anterior. O convite para de valer quando a turma encerra.</p>`
+      : `<p class="text-[15px]">Crie um link e um QR code para os aprendizes desta turma se cadastrarem sozinhos pelo celular. Cada pedido chega para você aprovar.</p><div class="mt-6"><button class="btn-primario" data-a="gerarConvite" data-id="${t.id}">Criar link e QR code</button></div>`;
+  } else if (m.tipo === 'projetarConvite') {
+    const t = turma(m.id); titulo = esc(t.nome); largo = true;
+    corpo = `<div class="text-center"><p class="text-2xl font-bold">Aponte a câmera do celular para entrar na turma</p><img src="/api/convite/qr?turma=${encodeURIComponent(t.id)}&v=${encodeURIComponent(t.convite || '')}" alt="QR code do convite" class="ap-qr ap-qr-grande mt-6"><p class="mt-5 break-words text-lg font-semibold">${esc(location.host)}/?convite=${esc(t.convite || '')}</p></div>`;
   } else if (m.tipo === 'encerrar') {
     const t = turma(m.id);
     titulo = 'Encerrar turma agora?';
@@ -667,7 +796,7 @@ function mostrarErro(msg) { const err = document.getElementById('erro-form'); if
 function sessaoExpirou() { pararTimer(); D = dadosVazios(); SNAP = null; Object.assign(S, { papel: null, modal: null, jogo: null, jogoAluno: null, menu: false }); render(); toast('Sua sessão terminou. Entre de novo.', true, false); }
 const reviver = (k, v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) ? new Date(v) : v);
 let SNAP = null;
-function foto() { const s = {}; COLS.forEach((c) => { s[c] = new Map(D[c].map((o) => [o.id, JSON.stringify(o)])); }); s.lidos = new Set(D.lidos); s.vistas = new Set(D.vistas); s.duracao = D.duracao; return s; }
+function foto() { const s = {}; COLS.forEach((c) => { s[c] = new Map(D[c].map((o) => [o.id, JSON.stringify(o)])); }); s.lidos = new Set(D.lidos); s.vistas = new Set(D.vistas); s.vistasAt = new Set(D.vistasAt); s.vistasAv = new Set(D.vistasAv); s.duracao = D.duracao; return s; }
 async function carregar(manterTela = false) {
   if (!manterTela) carregando(true, 'Carregando');
   try {
@@ -675,10 +804,12 @@ async function carregar(manterTela = false) {
     if (res.status === 401) { D = dadosVazios(); SNAP = null; S.papel = null; render(); return false; }
     if (!res.ok) throw new Error();
     const { sessao, D: d } = JSON.parse(await res.text(), reviver);
-    D = { ...dadosVazios(), ...d, lidos: new Set(d.lidos), vistas: new Set(d.vistas) };
+    const antes = S.papel ? novidadesChaves() : null;
+    D = { ...dadosVazios(), ...d, lidos: new Set(d.lidos), vistas: new Set(d.vistas), vistasAt: new Set(d.vistasAt || []), vistasAv: new Set(d.vistasAv || []) };
     SNAP = foto();
     if (sessao.papel === 'prof') S.prof = sessao.id; else S.eu = sessao.id;
     if (S.papel !== sessao.papel || !manterTela) { S.papel = sessao.papel; S.view = 'inicio'; S.modal = null; }
+    if (antes && manterTela) avisarNovidades(antes); // antes de desenhar: a tela Novidades marca tudo como visto
     render();
     return true;
   } catch (e) { document.getElementById('app').innerHTML = '<p style="padding:2rem;font-family:sans-serif">Não foi possível carregar o Aprendiz+. Confira a conexão e recarregue a página.</p>'; return false; }
@@ -694,13 +825,14 @@ function persistir() {
     ant.forEach((_, id) => { if (!vivos.has(id)) { (deletes[c] ||= []).push(id); n++; } });
   });
   const lidos = [...D.lidos].filter((x) => !SNAP.lidos.has(x)); const vistas = [...D.vistas].filter((x) => !SNAP.vistas.has(x));
+  const vistasAt = [...D.vistasAt].filter((x) => !SNAP.vistasAt.has(x)); const vistasAv = [...D.vistasAv].filter((x) => !SNAP.vistasAv.has(x));
   const config = D.duracao !== SNAP.duracao ? { duracao: D.duracao } : null;
-  n += lidos.length + vistas.length + (config ? 1 : 0);
+  n += lidos.length + vistas.length + vistasAt.length + vistasAv.length + (config ? 1 : 0);
   COLS.forEach((c) => D[c].forEach((o) => { delete o._senha; }));
   SNAP = foto();
   if (!n) return;
   fila = fila.then(async () => {
-    const r = await enviar('/api/sync', { upserts, deletes, lidos, vistas, config });
+    const r = await enviar('/api/sync', { upserts, deletes, lidos, vistas, vistasAt, vistasAv, config });
     if (!r) { if (S.papel) { toast('Não foi possível salvar a última alteração. Os dados foram recarregados.', true, false); await carregar(true); } return; }
     if (r.renomeados?.length) {
       r.renomeados.forEach(({ col, id, usuario }) => { const o = D[col].find((x) => x.id === id); if (!o) return; (S.credenciais || []).forEach((c) => { if (c.usuario === o.usuario) c.usuario = usuario; }); o.usuario = usuario; });
@@ -715,21 +847,26 @@ function csvTurma(t) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   a.download = `relatorio-${(t.codigo || t.nome).replace(/[^\w.-]+/g, '-')}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-setInterval(() => {
-  const ocupado = !S.papel || S.modal || S.jogo || S.jogoAluno || document.hidden || (S.view || '').startsWith('responder') || document.activeElement?.matches?.('input,textarea,select');
-  if (!ocupado) fila = fila.then(() => carregar(true));
-}, 60000);
+let ultimaAtualizacao = Date.now();
+function atualizarFundo(forcar = false) {
+  const ocupado = !S.papel || S.modal || S.jogo || S.jogoAluno || (!document.hidden && ((S.view || '').startsWith('responder') || document.activeElement?.matches?.('input,textarea,select')));
+  if (ocupado && !forcar) return;
+  if (!forcar && document.hidden && Date.now() - ultimaAtualizacao < 55000) return; // em segundo plano: a cada ~1 min
+  ultimaAtualizacao = Date.now(); fila = fila.then(() => carregar(true));
+}
+setInterval(() => atualizarFundo(), 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - ultimaAtualizacao > 10000) atualizarFundo(); });
 
 /* ---------- render ---------- */
 function render() {
   const app = document.getElementById('app');
   let html;
-  if (!S.papel) html = S.precisaAdmin ? telaCriarAdmin() : S.etapa2 ? telaCodigo() : telaLogin();
+  if (!S.papel) html = S.convite ? telaConvite() : S.precisaAdmin ? telaCriarAdmin() : S.etapa2 ? telaCodigo() : telaLogin();
   else if ((S.papel === 'aluno' && aluno(S.eu)?.primeiro) || (S.papel === 'prof' && instrutor(S.prof)?.primeiro)) html = telaPrimeiroAcesso();
   else {
     const [v, arg] = S.view.split(':');
-    const prof = { inicio: vInicio, mural: vMural, instrutores: vInstrutores, turmas: vTurmas, aprendizes: vAprendizes, materiais: vMateriais, correcoes: vCorrecoes, relatorios: vRelatorios, config: vConfig };
-    const al = { inicio: vAlunoInicio, mural: vMural, aulas: vAlunoAulas, aula: () => vAlunoAula(arg), atividades: vAlunoAtividades, responder: () => vAlunoResponder(arg), jogar: vAlunoJogar, historico: vHistorico };
+    const prof = { inicio: vInicio, mural: vMural, instrutores: vInstrutores, turmas: vTurmas, aprendizes: vAprendizes, materiais: vMateriais, correcoes: vCorrecoes, relatorios: vRelatorios, config: vConfig, perfil: vPerfil };
+    const al = { inicio: vAlunoInicio, mural: vMural, aulas: vAlunoAulas, aula: () => vAlunoAula(arg), atividades: vAlunoAtividades, responder: () => vAlunoResponder(arg), jogar: vAlunoJogar, historico: vHistorico, novidades: vNovidades, perfil: vPerfil };
     html = moldura((S.papel === 'prof' ? prof[v] : al[v] || al.inicio)());
   }
   if (S.modal) html += modal();
@@ -751,6 +888,14 @@ function ir(v) { S.view = v; S.menu = false; S.modal = null; render(); window.sc
 /* ---------- ações ---------- */
 const A = {
   tema: () => { aplicarTema(!escuro()); render(); },
+  ativarNotificacoes: async () => { try { const r = await Notification.requestPermission(); toast(r === 'granted' ? 'Notificações ativadas.' : 'Notificações não foram permitidas no navegador.', r !== 'granted', true); } catch (e) { toast('Este navegador não aceita notificações.', true, false); } },
+  gerarConvite: async (el) => { const r = await enviar('/api/convite', { turma: el.dataset.id, acao: 'gerar' }); if (!r) return; const t = turma(el.dataset.id); t.convite = r.token; SNAP = foto(); S.modal = { tipo: 'convite', id: t.id }; render(); toast('Convite pronto. Compartilhe o link ou mostre o QR code.', false, false); },
+  desativarConvite: async (el) => { const r = await enviar('/api/convite', { turma: el.dataset.id, acao: 'desativar' }); if (!r) return; const t = turma(el.dataset.id); t.convite = null; SNAP = foto(); S.modal = { tipo: 'convite', id: t.id }; render(); toast('Convite desativado. O link antigo não funciona mais.', false, false); },
+  copiarConvite: async () => { const f = document.getElementById('f-link'); try { await navigator.clipboard.writeText(f.value); toast('Link copiado.', false, false); } catch (e) { f.select(); toast('Selecione e copie o link.', false, false); } },
+  projetarConvite: (el) => { S.modal = { tipo: 'projetarConvite', id: el.dataset.id }; render(); },
+  marcarPedidos: () => { const cx = [...document.querySelectorAll('form[data-form="pedidos"] input[name="sel"]')]; const todos = cx.every((c) => c.checked); cx.forEach((c) => { c.checked = !todos; }); },
+  removerFoto: async () => { S.fotoNova = null; const r = await enviar('/api/perfil', { removerFoto: true }); if (r) { await carregar(true); toast('Foto removida.', false, false); } },
+  sairConvite: () => { S.convite = null; S.fotoNova = null; history.replaceState(null, '', '/'); render(); },
   reenviarCodigo: async () => { const r = await enviar('/api/auth/codigo', { reenviar: true }); if (r) toast('Enviamos um novo código para o seu e-mail.', false, false); },
   voltarLogin: () => { S.etapa2 = null; render(); },
   sair: async () => { await fila; await enviar('/api/auth/logout'); D = dadosVazios(); SNAP = null; S.papel = null; S.credenciais = null; S.credInstrutor = null; S.aba = null; S.muralTurma = null; S.relTurma = null; S.menu = false; pararTimer(); S.jogo = S.jogoAluno = null; render(); },
@@ -806,6 +951,15 @@ const A = {
 document.addEventListener('click', async (ev) => { const el = ev.target.closest('[data-a]'); if (!el || el.tagName === 'INPUT') return; const f = A[el.dataset.a]; if (f) { ev.preventDefault(); await f(el); persistir(); } });
 document.addEventListener('input', (ev) => { if (ev.target.dataset?.a === 'buscaMat') { S.buscaMat = ev.target.value; const pos = ev.target.selectionStart; render(); const el = document.getElementById('busca-mat'); if (el) { el.focus(); el.setSelectionRange(pos, pos); } } });
 document.addEventListener('change', (ev) => {
+  if (ev.target.dataset?.a === 'fotoEscolhida') {
+    const f = ev.target.files?.[0]; if (!f) return;
+    reduzirFoto(f).then((url) => {
+      S.fotoNova = url; const box = document.getElementById('ap-previa'); const px = box?.dataset.px || 72;
+      if (box) box.innerHTML = `<img src="${url}" alt="" class="ap-av" style="width:${px}px;height:${px}px">`;
+      if (S.papel) toast('Foto pronta. Clique em "Salvar perfil" para guardar.', false, false);
+    }).catch((e) => toast(e.message, true, false));
+    ev.target.value = ''; return;
+  }
   if (ev.target.dataset?.a === 'modoSlides') { const arq = ev.target.value === 'arquivo'; document.getElementById('bloco-sl-arquivo')?.classList.toggle('hidden', !arq); document.getElementById('bloco-sl-criado')?.classList.toggle('hidden', arq); return; }
   if (ev.target.dataset?.a === 'fmtNova') { const arq = ev.target.value === 'arquivo'; document.getElementById('bloco-arquivo')?.classList.toggle('hidden', !arq); document.getElementById('bloco-texto')?.classList.toggle('hidden', arq); return; } if (ev.target.dataset?.a === 'arquivoEscolhido') {
     const f = ev.target.files?.[0]; const p = document.getElementById('nome-arq'); if (!f) return;
@@ -843,6 +997,14 @@ const F = {
     if (r) { await carregar(); if (r.semEmail) toast('Cadastre seu e-mail em Configurações para ativar a verificação em duas etapas.', false, false); }
   },
   criarAdmin: async (fd, form) => { const s = String(fd.get('senha')); const msg = s.length < 8 || !/\d/.test(s) || !/[a-z]/i.test(s) ? 'Use pelo menos 8 caracteres, com letras e números.' : s !== fd.get('conf') ? 'As senhas não conferem.' : ''; if (msg) return mostrarErro(msg); const btn = form.querySelector('button'); btn.disabled = true; btn.textContent = 'Criando…'; const r = await enviar('/api/auth/primeiro', { nome: fd.get('nome'), usuario: fd.get('usuario'), email: fd.get('email'), senha: s }); btn.disabled = false; btn.textContent = 'Criar conta e entrar'; if (!r) { const c = await fetch('/api/auth/primeiro', { cache: 'no-store' }).then((x) => x.json()).catch(() => ({})); if (c.precisa === false) { S.precisaAdmin = false; render(); } return; } S.precisaAdmin = false; await carregar(); toast('Conta criada. Bem-vinda!', false, false); },
+  perfil: async (fd) => { const corpo = { sobre: String(fd.get('sobre') || '') }; if (S.fotoNova) corpo.foto = S.fotoNova; const r = await enviar('/api/perfil', corpo); if (!r) return; S.fotoNova = null; await carregar(true); toast('Perfil salvo.', false, false); },
+  pedidos: (fd, form, sub) => { const ids = fd.getAll('sel').map(String); if (!ids.length) return toast('Marque pelo menos um pedido.', true, false); const acao = sub?.value || 'aprovar';
+    if (acao === 'aprovar') { ids.forEach((id) => { const a = aluno(id); if (a) a.aprovado = true; }); toast(ids.length === 1 ? 'Pedido aprovado. O aprendiz já pode entrar.' : ids.length + ' pedidos aprovados. Os aprendizes já podem entrar.'); }
+    else { D.alunos = D.alunos.filter((a) => !ids.includes(a.id)); toast(ids.length === 1 ? 'Pedido recusado.' : ids.length + ' pedidos recusados.'); } },
+  cadastroConvite: async (fd, form) => { const s = String(fd.get('senha')); if (s !== fd.get('conf')) return mostrarErro('As senhas não conferem.'); if (s.length < 8 || !/\d/.test(s) || !/[a-z]/i.test(s)) return mostrarErro('Use pelo menos 8 caracteres, com letras e números.');
+    const usuario = String(fd.get('usuario') || '').trim().toLowerCase(); const btn = form.querySelector('button[class*="btn-primario"]'); if (btn) btn.disabled = true;
+    const r = await enviar('/api/convite/entrar', { t: S.convite.token, nome: String(fd.get('nome') || ''), usuario, senha: s, sobre: String(fd.get('sobre') || ''), foto: S.fotoNova || undefined });
+    if (btn) btn.disabled = false; if (!r) return; S.convite.enviado = true; S.convite.usuario = usuario; S.fotoNova = null; render(); },
   codigo2: async (fd, form) => { const c = String(fd.get('codigo') || '').replace(/\D/g, ''); if (c.length !== 6) return mostrarErro('Digite os 6 números do código.'); const btn = form.querySelector('button'); btn.disabled = true; const r = await enviar('/api/auth/codigo', { codigo: c }); btn.disabled = false; if (!r) { const f = document.getElementById('f-cod'); if (f) { f.value = ''; f.focus(); } return; } S.etapa2 = null; await carregar(); },
   meuEmail: async (fd) => { const r = await enviar('/api/auth/email', { email: String(fd.get('email') || '').trim(), senha: String(fd.get('senha') || '') }); if (!r) return; await carregar(true); toast('E-mail salvo. A verificação em duas etapas vale a partir do próximo login.', false, false); },
   primeiro: async (fd) => { const s = String(fd.get('senha')); const err = document.getElementById('erro-form'); const msg = s.length < 8 || !/\d/.test(s) || !/[a-z]/i.test(s) ? 'Use pelo menos 8 caracteres, com letras e números.' : s !== fd.get('conf') ? 'As senhas não conferem.' : ''; if (msg) { err.textContent = msg; err.classList.remove('hidden'); return; } const r = await enviar('/api/auth/senha', { senha: s }); if (!r) return; await carregar(); toast('Senha criada. Bem-vinda!', false, false); },
@@ -933,7 +1095,16 @@ JSON: {"titulo": "...", "slides": [{"titulo": "...", "texto": "• tópico\\n•
 };
 document.addEventListener('submit', async (ev) => { const form = ev.target.closest('[data-form]'); if (!form) return; ev.preventDefault(); const sub = ev.submitter; if (S.enviandoArq) { if (sub) sub.disabled = true; await S.enviandoArq; if (sub) sub.disabled = false; } const fd = new FormData(form); fd.delete('arq'); await F[form.dataset.form]?.(fd, form, sub); persistir(); });
 
-fetch('/api/auth/primeiro', { cache: 'no-store' }).then((r) => r.json()).then((j) => { S.precisaAdmin = !!j.precisa; }).catch(() => {}).finally(() => carregar());
+(async () => {
+  const token = new URLSearchParams(location.search).get('convite');
+  if (token) {
+    try { const r = await fetch('/api/convite?t=' + encodeURIComponent(token), { cache: 'no-store' }); const j = await r.json(); S.convite = r.ok ? { token, ...j } : { token, erro: j.erro || 'Convite inválido.' }; }
+    catch (e) { S.convite = { token, erro: 'Sem conexão. Confira a internet e abra o link de novo.' }; }
+    render(); return;
+  }
+  try { const j = await fetch('/api/auth/primeiro', { cache: 'no-store' }).then((r) => r.json()); S.precisaAdmin = !!j.precisa; } catch (e) { /* segue */ }
+  carregar();
+})();
 </script>
 </body>
 </html>
