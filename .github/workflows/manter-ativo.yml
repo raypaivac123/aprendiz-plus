@@ -1,0 +1,28 @@
+# Mantém o Aprendiz+ rápido no plano gratuito:
+# chama o site de 20 em 20 minutos no horário de aula (seg–sáb, 7h às 22h de Brasília)
+# e algumas vezes por dia no resto do tempo. Cada chamada consulta o banco,
+# então o Supabase nunca fica parado e a Vercel não "esfria".
+name: Manter ativo
+
+on:
+  schedule:
+    - cron: '*/20 10-23 * * 1-6'   # 7h–20h40 de Brasília (UTC-3), seg–sáb
+    - cron: '*/20 0-1 * * 2-6,0'   # 21h–22h40 de Brasília, seg–sáb
+    - cron: '7 2,6,13,19 * * *'    # 4 vezes por dia, todos os dias (madrugada e domingo)
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Chamar o site e o banco
+        run: |
+          for url in "https://aprendiz-plus.vercel.app/api/saude" "https://aprendiz-plus.vercel.app/"; do
+            for tentativa in 1 2 3; do
+              codigo=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$url") && [ "$codigo" = "200" ] && break
+              echo "Tentativa $tentativa em $url: $codigo"; sleep 10
+            done
+            echo "$url -> $codigo"
+          done
+          curl -s --max-time 30 https://aprendiz-plus.vercel.app/api/saude
