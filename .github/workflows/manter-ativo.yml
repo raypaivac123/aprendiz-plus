@@ -18,11 +18,15 @@ jobs:
     steps:
       - name: Chamar o site e o banco
         run: |
-          for url in "https://aprendizplus.com.br/api/saude" "https://aprendizplus.com.br/"; do
+          falhou=0
+          # Endereço da Vercel (sempre existe) e domínio próprio (pode estar propagando)
+          for url in "https://aprendiz-plus.vercel.app/api/saude" "https://aprendizplus.com.br/api/saude" "https://aprendiz-plus.vercel.app/"; do
+            codigo=000
             for tentativa in 1 2 3; do
-              codigo=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$url") && [ "$codigo" = "200" ] && break
-              echo "Tentativa $tentativa em $url: $codigo"; sleep 10
+              codigo=$(curl -s -L -o /dev/null -w '%{http_code}' --max-time 30 "$url") && [ "$codigo" = "200" ] && break
+              sleep 10
             done
             echo "$url -> $codigo"
+            case "$url" in *vercel.app*) [ "$codigo" = "200" ] || falhou=1 ;; esac
           done
-          curl -s --max-time 30 https://aprendizplus.com.br/api/saude
+          exit $falhou
