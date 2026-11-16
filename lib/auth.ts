@@ -21,6 +21,27 @@ export async function criarSessao(papel: Papel, id: string) {
   (await cookies()).set(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: DURACAO });
 }
 
+// ---------- verificação em duas etapas ----------
+const COOKIE_2FA = 'ap_2fa';
+const DURACAO_2FA = 60 * 10; // 10 minutos
+
+/** Guarda quem passou pela senha e ainda precisa do código. */
+export async function criarDesafio(id: string) {
+  const token = await new SignJWT({ id, etapa: '2fa' }).setProtectedHeader({ alg: 'HS256' }).setIssuedAt().setExpirationTime(`${DURACAO_2FA}s`).sign(segredo());
+  (await cookies()).set(COOKIE_2FA, token, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', path: '/api/auth', maxAge: DURACAO_2FA });
+}
+export async function lerDesafio(): Promise<string | null> {
+  const token = (await cookies()).get(COOKIE_2FA)?.value;
+  if (!token) return null;
+  try {
+    const p = (await jwtVerify(token, segredo())).payload as { id?: string; etapa?: string };
+    return p.etapa === '2fa' && typeof p.id === 'string' ? p.id : null;
+  } catch { return null; }
+}
+export async function encerrarDesafio() {
+  (await cookies()).set(COOKIE_2FA, '', { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', path: '/api/auth', maxAge: 0 });
+}
+
 export async function encerrarSessao() {
   (await cookies()).delete(COOKIE);
 }

@@ -1,7 +1,9 @@
 // © Rayssa Paiva · Todos os direitos reservados
 import bcrypt from 'bcryptjs';
 import { db, garantirEsquema } from '@/lib/db';
-import { criarSessao, erro, json } from '@/lib/auth';
+import { criarDesafio, criarSessao, erro, json } from '@/lib/auth';
+import { emailConfigurado, mascararEmail } from '@/lib/email';
+import { gerarEEnviar } from '@/lib/codigo';
 
 const espera = () => new Promise((r) => setTimeout(r, 400 + Math.random() * 400));
 const LIMITE = 8;        // tentativas erradas seguidas
@@ -28,13 +30,23 @@ export async function POST(req: Request) {
   };
   const acertou = () => sql`delete from tentativas_login where chave = ${u}`;
 
-  const [ins] = await sql`select id, ativo, senha_hash from instrutores where usuario = ${u} or email = ${u}`;
+  const [ins] = await sql`select id, nome, email, ativo, senha_hash from instrutores where usuario = ${u} or email = ${u}`;
   if (ins) {
     if (!ins.senha_hash || !(await bcrypt.compare(p, ins.senha_hash))) return falhou();
     await acertou();
     if (!ins.ativo) return erro('Esta conta de instrutor está desativada.', 403);
+    // Verificação em duas etapas: instrutores com e-mail recebem um código
+    if (emailConfigurado() && ins.email) {
+      try {
+        await gerarEEnviar(sql, ins);
+      } catch {
+        return erro('Não foi possível enviar o código por e-mail agora. Tente de novo em instantes.', 502);
+      }
+      await criarDesafio(ins.id);
+      return json({ doisFatores: true, email: mascararEmail(ins.email) });
+    }
     await criarSessao('prof', ins.id);
-    return json({ ok: true });
+    return json({ ok: true, semEmail: emailConfigurado() && !ins.email });
   }
 
   const [a] = await sql`select a.id, a.ativo, a.expira, a.senha_hash, t.dados->>'fechada' as fechada

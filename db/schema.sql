@@ -144,3 +144,13 @@ create table if not exists tentativas_login (
   ate     timestamptz
 );
 alter table tentativas_login enable row level security;
+
+-- Verificação em duas etapas (código por e-mail)
+create table if not exists codigos_acesso (
+  instrutor_id text primary key references instrutores(id) on delete cascade,
+  codigo_hash  text not null,
+  expira       timestamptz not null,
+  tentativas   integer not null default 0,
+  enviado_em   timestamptz not null default now()
+);
+alter table codigos_acesso enable row level security;
