@@ -136,3 +136,11 @@ alter table config         enable row level security;
 alter table jogo_sessoes   enable row level security;
 alter table jogo_jogadores enable row level security;
 alter table jogo_respostas enable row level security;
+
+-- Proteção contra tentativas de senha em sequência
+create table if not exists tentativas_login (
+  chave   text primary key,
+  falhas  integer not null default 0,
+  ate     timestamptz
+);
+alter table tentativas_login enable row level security;
