@@ -34,7 +34,14 @@ export async function POST(req: Request) {
     return erro('Não foi possível falar com a IA agora.', 502);
   }
   if (r.status === 429) return erro('Muitos pedidos seguidos. Tente de novo em instantes.', 429);
-  if (!r.ok || !r.body) return erro('Não foi possível usar a IA agora.', 502);
+  if (!r.ok || !r.body) {
+    // Mostra o motivo devolvido pelo provedor (nunca inclui a chave)
+    const det = await r.text().catch(() => '');
+    let msg = '';
+    try { msg = JSON.parse(det)?.error?.message || ''; } catch { msg = det.slice(0, 200); }
+    console.error('ia', r.status, msg);
+    return erro(`Não foi possível usar a IA agora (provedor respondeu ${r.status}${msg ? ': ' + msg : ''}).`, 502);
+  }
 
   // Converte o fluxo SSE do modelo em texto puro para o navegador
   const dec = new TextDecoder();
