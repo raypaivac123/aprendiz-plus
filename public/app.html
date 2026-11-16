@@ -137,6 +137,21 @@ function telaLogin() {
       <p class="mt-6 text-sm text-suave">Esqueceu a senha? Peça ao seu instrutor uma nova senha provisória.</p>
     </div>${copy()}</main></div>`;
 }
+function telaCriarAdmin() {
+  return `${faixaDemo}<div class="mx-auto flex min-h-[calc(100dvh-28px)] max-w-sm flex-col justify-center px-6 py-10">
+    <div class="mb-6 flex items-center justify-between">${marca()}${botaoTema()}</div>
+    <h1 class="text-2xl font-bold">Criar a conta de administração</h1>
+    <p class="mt-1.5 text-[15px] text-suave">Esta tela aparece só uma vez, no primeiro acesso ao site. Depois, as outras contas são criadas por dentro da plataforma.</p>
+    <form data-form="criarAdmin" class="mt-7 space-y-4">
+      ${campo('Nome completo', 'nome', 'required autocomplete="name"')}
+      ${campo('Usuário', 'usuario', 'required autocapitalize="none" autocomplete="username" placeholder="nome.sobrenome"')}
+      ${campo('E-mail (opcional)', 'email', 'type="email" autocomplete="email"')}
+      ${campo('Senha', 'senha', 'type="password" minlength="8" required autocomplete="new-password"', 'Mínimo de 8 caracteres, com letras e números.')}
+      ${campo('Confirme a senha', 'conf', 'type="password" minlength="8" required autocomplete="new-password"')}
+      <p id="erro-form" role="alert" class="hidden rounded-campo border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200"></p>
+      <button class="btn-primario w-full py-3">Criar conta e entrar</button>
+    </form>${copy('mt-10')}</div>`;
+}
 function telaPrimeiroAcesso() {
   const prof = S.papel === 'prof'; const a = prof ? instrutor(S.prof) : aluno(S.eu);
   return `${faixaDemo}<div class="mx-auto flex min-h-[calc(100dvh-28px)] max-w-sm flex-col justify-center px-6 py-10">
@@ -645,7 +660,7 @@ setInterval(() => {
 function render() {
   const app = document.getElementById('app');
   let html;
-  if (!S.papel) html = telaLogin();
+  if (!S.papel) html = S.precisaAdmin ? telaCriarAdmin() : telaLogin();
   else if ((S.papel === 'aluno' && aluno(S.eu)?.primeiro) || (S.papel === 'prof' && instrutor(S.prof)?.primeiro)) html = telaPrimeiroAcesso();
   else {
     const [v, arg] = S.view.split(':');
@@ -759,6 +774,7 @@ const F = {
     btn.disabled = false; btn.textContent = 'Entrar';
     if (r) await carregar();
   },
+  criarAdmin: async (fd, form) => { const s = String(fd.get('senha')); const msg = s.length < 8 || !/\d/.test(s) || !/[a-z]/i.test(s) ? 'Use pelo menos 8 caracteres, com letras e números.' : s !== fd.get('conf') ? 'As senhas não conferem.' : ''; if (msg) return mostrarErro(msg); const btn = form.querySelector('button'); btn.disabled = true; btn.textContent = 'Criando…'; const r = await enviar('/api/auth/primeiro', { nome: fd.get('nome'), usuario: fd.get('usuario'), email: fd.get('email'), senha: s }); btn.disabled = false; btn.textContent = 'Criar conta e entrar'; if (!r) { const c = await fetch('/api/auth/primeiro', { cache: 'no-store' }).then((x) => x.json()).catch(() => ({})); if (c.precisa === false) { S.precisaAdmin = false; render(); } return; } S.precisaAdmin = false; await carregar(); toast('Conta criada. Bem-vinda!', false, false); },
   primeiro: async (fd) => { const s = String(fd.get('senha')); const err = document.getElementById('erro-form'); const msg = s.length < 8 || !/\d/.test(s) || !/[a-z]/i.test(s) ? 'Use pelo menos 8 caracteres, com letras e números.' : s !== fd.get('conf') ? 'As senhas não conferem.' : ''; if (msg) { err.textContent = msg; err.classList.remove('hidden'); return; } const r = await enviar('/api/auth/senha', { senha: s }); if (!r) return; await carregar(); toast('Senha criada. Bem-vinda!', false, false); },
   novaTurma: (fd, form) => {
     const ini = new Date(fd.get('inicio') + 'T00:00:00'); const dias = Math.max(1, +fd.get('dias'));
@@ -847,7 +863,7 @@ JSON: {"titulo": "...", "slides": [{"titulo": "...", "texto": "• tópico\\n•
 };
 document.addEventListener('submit', async (ev) => { const form = ev.target.closest('[data-form]'); if (!form) return; ev.preventDefault(); const sub = ev.submitter; if (S.enviandoArq) { if (sub) sub.disabled = true; await S.enviandoArq; if (sub) sub.disabled = false; } const fd = new FormData(form); fd.delete('arq'); await F[form.dataset.form]?.(fd, form, sub); persistir(); });
 
-carregar();
+fetch('/api/auth/primeiro', { cache: 'no-store' }).then((r) => r.json()).then((j) => { S.precisaAdmin = !!j.precisa; }).catch(() => {}).finally(() => carregar());
 </script>
 </body>
 </html>

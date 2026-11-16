@@ -10,8 +10,9 @@ const COOKIE = 'ap_sessao';
 const DURACAO = 60 * 60 * 12; // 12 horas
 
 function segredo() {
-  const s = process.env.AUTH_SECRET;
-  if (!s || s.length < 24) throw new Error('AUTH_SECRET ausente ou curto demais (use 24+ caracteres).');
+  // AUTH_SECRET é opcional: sem ele, usa o segredo que a integração Supabase da Vercel já cria.
+  const s = process.env.AUTH_SECRET || process.env.SUPABASE_JWT_SECRET || process.env.POSTGRES_PASSWORD;
+  if (!s || s.length < 24) throw new Error('Defina AUTH_SECRET (24+ caracteres) ou conecte a integração Supabase.');
   return new TextEncoder().encode(s);
 }
 

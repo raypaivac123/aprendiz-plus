@@ -6,7 +6,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import bcrypt from 'bcryptjs';
 
-const url = process.env.DATABASE_URL;
+const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 if (!url) { console.error('Configure DATABASE_URL no .env.local'); process.exit(1); }
 const sql = postgres(url, { prepare: false, ssl: process.env.DATABASE_SSL === 'false' ? false : 'require', max: 1 });
 

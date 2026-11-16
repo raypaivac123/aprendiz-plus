@@ -1,6 +1,6 @@
 // © Rayssa Paiva · Todos os direitos reservados
 import bcrypt from 'bcryptjs';
-import { db } from '@/lib/db';
+import { db, garantirEsquema } from '@/lib/db';
 import { criarSessao, erro, json } from '@/lib/auth';
 
 const espera = () => new Promise((r) => setTimeout(r, 400 + Math.random() * 400));
@@ -10,6 +10,7 @@ export async function POST(req: Request) {
   const u = String(usuario ?? '').trim().toLowerCase();
   const p = String(senha ?? '');
   if (!u || !p) return erro('Preencha usuário e senha.');
+  await garantirEsquema();
   const sql = db();
 
   const [ins] = await sql`select id, ativo, senha_hash from instrutores where usuario = ${u} or email = ${u}`;
