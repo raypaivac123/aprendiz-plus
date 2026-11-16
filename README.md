@@ -43,7 +43,7 @@ Plataforma de aulas, atividades, correções, mural e quiz ao vivo para as turma
 
 ### 3. Chave da IA (Llama)
 1. Entre em [console.groq.com/keys](https://console.groq.com/keys) e crie uma chave grátis.
-2. Guarde a chave: ela é o `LLM_API_KEY`. O modelo padrão é `llama-3.3-70b-versatile`.
+2. Guarde a chave: ela é o `LLM_API_KEY`. O modelo padrão é `openai/gpt-oss-120b`.
 
 ### 4. Primeira administradora
 No seu computador, com Node 20 ou mais novo:
@@ -65,7 +65,7 @@ O comando mostra o **usuário** e a **senha provisória**. No primeiro acesso a 
    | `CRON_SECRET` | outro texto aleatório |
    | `LLM_API_KEY` | chave da Groq |
    | `LLM_BASE_URL` | `https://api.groq.com/openai/v1` |
-   | `LLM_MODEL` | `llama-3.3-70b-versatile` |
+   | `LLM_MODEL` | `openai/gpt-oss-120b` |
 
 3. Clique em **Deploy**. Depois disso, cada `git push` publica uma nova versão automaticamente.
 

@@ -1,5 +1,5 @@
 // © Rayssa Paiva · Todos os direitos reservados
-// IA com Llama por uma API compatível com OpenAI (Groq por padrão; Ollama também funciona).
+// IA por uma API compatível com OpenAI (Groq por padrão, modelo GPT-OSS 120B; Ollama também funciona).
 import { erro, sessao } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +14,9 @@ export async function POST(req: Request) {
 
   const base = (process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1').replace(/\/$/, '');
   const chave = process.env.LLM_API_KEY;
-  const modelo = process.env.LLM_MODEL || 'llama-3.3-70b-versatile';
+  // A Groq desligou os modelos Llama do plano gratuito em ago/2026; o substituto indicado é o gpt-oss-120b.
+  const modelo = process.env.LLM_MODEL || 'openai/gpt-oss-120b';
+  const raciocinio = modelo.includes('gpt-oss') ? { reasoning_effort: 'low' } : {};
   if (!chave) return erro('A IA ainda não foi configurada (LLM_API_KEY).', 503);
 
   let r: Response;
@@ -23,7 +25,7 @@ export async function POST(req: Request) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${chave}` },
       body: JSON.stringify({
-        model: modelo, stream: true, temperature: 0.7, max_tokens: 2048,
+        model: modelo, stream: true, temperature: 0.7, max_tokens: 4096, ...raciocinio,
         messages: [
           { role: 'system', content: 'Você é uma assistente pedagógica do Senac. Responda sempre em português do Brasil e siga exatamente o formato pedido.' },
           { role: 'user', content: texto },
